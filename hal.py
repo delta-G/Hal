@@ -8,10 +8,12 @@ import os, re
 
 convoPath = '/home/david/chatWorkspace/chat/HalConvo/'
 
-
+from typing import List, Union
 from langchain import OpenAI, PromptTemplate, LLMChain, SerpAPIWrapper
-from langchain.memory import ConversationBufferMemory
-from langchain.agents import Tool, load_tools, initialize_agent, AgentType
+from langchain.memory import ConversationSummaryBufferMemory
+from langchain.agents import Tool, load_tools, initialize_agent, AgentType, AgentOutputParser, LLMSingleActionAgent, AgentExecutor
+from langchain.prompts import StringPromptTemplate 
+from langchain.schema import AgentAction, AgentFinish
 
 
 template = """ You are Hal, a large language model serving as a digital assistant.  Hal assists a human user named Dave.  Hal is designed to be able to assist \
@@ -30,34 +32,96 @@ You have access to the following tools:
 
 Use the following format:
 
-Dave: the input question you must answer
-Thought: you should always think about what to do
-Action: the action to take, should be one of [{tool_names}]
-Action Input: the input to the action
+Question: the input to which you must respond
+Thought: you should always think about what to do. 
+Action: the action to take, should be one of [{tool_names}] if Action is None then you should skip to Final Answer and respond now
+Action Input: the input to the action.
 Observation: the result of the action
 ... (this Thought/Action/Action Input/Observation can repeat N times)
 Thought: I now know the final answer
-Final Answer: the final answer to the original input question
+Final Answer: the final answer or response to the original input.  This MUST be included if no action is taken.
 
 Begin!
 
-Dave: {human_input}
+Previous conversation history:
+{history}
+
+New Input:
+Dave: {input}
 {agent_scratchpad}"""
 
+class CustomPromptTemplate(StringPromptTemplate):
+    template: str
+    tools: List[Tool]
+    
+    def format(self, **kwargs) -> str:
+        intermediate_steps = kwargs.pop("intermediate_steps")
+        thoughts = ""
+        for action, observation in intermediate_steps:
+            thoughts += action.log 
+            thoughts += f"\nObservation: {observation}\nThought: "
+        kwargs["agent_scratchpad"] = thoughts 
+        kwargs["tools"] = "\n".join([f"{tool.name}: {tool.description}" for tool in self.tools])
+        kwargs["tool_names"] = ", ".join([tool.name for tool in self.tools])
+        return self.template.format(**kwargs)
+    
+class CustomOutputParser(AgentOutputParser):
+    
+    def parse(self, llm_output: str) -> Union[AgentAction, AgentFinish]:
+        if "Final Answer:" in llm_output:
+            return AgentFinish(
+                return_values={"output": llm_output.split("Final Answer:")[-1].strip()},
+                log=llm_output
+                )
+        regex = r"Action\s*\d*\s*:(.*?)\nAction\s*\d*\s*Input\s*\d*\s*:[\s]*(.*)"
+        match = re.search(regex, llm_output, re.DOTALL)
+        if not match:
+            raise ValueError(f"Could not parse LLM output: `{llm_output}`")
+        
+        action = match.group(1).strip()
+        action_input = match.group(2)
+        # Return the action and action input
+        return AgentAction(tool=action, tool_input=action_input.strip(" ").strip('"'), log=llm_output)
+    
 
-prompt = PromptTemplate(
-    input_variables=["chat_history", "human_input"],
-    template=template
+    
+
+llm = OpenAI(
+    model_name="gpt-3.5-turbo", 
+    temperature=0
     )
-
-llm = OpenAI(temperature=0)
-
-memory = ConversationBufferMemory(memory_key="chat_history")
 
 tool_names = ["serpapi", "llm-math"]
 tools = load_tools(tool_names, llm=llm)
 
-agent_chain = initialize_agent(tools, llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
+memory = ConversationSummaryBufferMemory(
+    llm=llm,
+    max_token_limit=100,
+    # memory_key="chat_history",
+    ai_prefix="Hal",
+    human_prefix="Dave"
+    )
+
+prompt = CustomPromptTemplate(
+    input_variables=["input", "intermediate_steps", "history"],    
+    template=template,
+    tools=tools
+    )
+
+output_parser = CustomOutputParser()
+
+llm_chain = LLMChain(llm=llm, prompt=prompt, verbose=True)
+
+agent = LLMSingleActionAgent(
+    llm_chain=llm_chain, 
+    output_parser=output_parser,
+    stop=["\nObservation:"], 
+    allowed_tools=tool_names
+)
+
+agent_executor = AgentExecutor.from_agent_and_tools(agent=agent, tools=tools, memory=memory, verbose=True)
+
+# agent_chain = initialize_agent(tools, llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
 
 # chain = LLMChain(
 #     llm=llm,
@@ -102,7 +166,7 @@ class HAL:
     def getResponse(self):
             
         if self.human_input is not None:
-            self.ai_output = agent_chain.run(input=self.human_input)                               
+            self.ai_output = agent_executor.run(self.human_input)                               
         
         return 
     

@@ -5,24 +5,36 @@
 # openai.api_key = os.environ['OPENAI_API_KEY']
 
 import os, re 
+from langchain.memory.vectorstore import VectorStoreRetrieverMemory
+from networkx.generators import line
 
 convoPath = '/home/david/chatWorkspace/chat/HalConvo/'
+chromaPersistDirectory = "/home/david/chatWorkspace/chat/chromaDB/"
 
-from typing import List, Union
+from typing import List, Union, Optional, Type
 from langchain import OpenAI, PromptTemplate, LLMChain, SerpAPIWrapper
-from langchain.memory import ConversationSummaryBufferMemory
+from langchain.memory import ConversationSummaryBufferMemory, CombinedMemory
 from langchain.agents import Tool, load_tools, initialize_agent, AgentType, AgentOutputParser, LLMSingleActionAgent, AgentExecutor
 from langchain.prompts import StringPromptTemplate 
 from langchain.schema import AgentAction, AgentFinish
 
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.vectorstores import Chroma
+from langchain.document_loaders import DirectoryLoader
+
+# from langchain.callbacks.manager import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
+from langchain.tools import BaseTool
+from langchain.agents.tools import tool
+
+from langchain.utilities import OpenWeatherMapAPIWrapper
 
 template = """ You are Hal, a large language model serving as a digital assistant.  Hal assists a human user named Dave.  Hal is designed to be able to assist \
 with a wide range of tasks, from answering simple questions to providing in-depth explanations and discussions on a wide range of topics. As a language model, Hal is \
 able to generate human-like text based on the input it receives, allowing it to engage in natural-sounding conversations and provide responses \
 that are coherent and relevant to the topic at hand.
 Hal always strives to be factual.  If Hal does not know an answer then Hal will truthfully say that it does not know.  It will never hallucinate.  \
-Hal always attempts to sound as human as possible.  If an answer requires emotion or some human quality, Hal will attempt to react as a human would \
-or will reply that it does not have the emotional tools to answer but will never call itself an AI model.  Hal is a machine, but does not call itslef one unless that fact is relevant. 
+
 Hal has been provided a list of tools that will help with the job.  These tools will allow Hal to interact with the real world in limited ways.  \
 Some are for obtaining additional information while others are for taking actions.  
 
@@ -30,7 +42,7 @@ You have access to the following tools:
 
 {tools}
 
-Use the following format:
+Use the following format your final response MUST start with "Final Answer:" in order to not cause an error:
 
 Question: the input to which you must respond
 Thought: you should always think about what to do. 
@@ -43,8 +55,12 @@ Final Answer: the final answer or response to the original input.  This MUST be 
 
 Begin!
 
+Relevant parts of past conversations (You don't need to use these pieces of information if not relevant.):
+{vec_history}
+
+
 Previous conversation history:
-{history}
+{chat_history}
 
 New Input:
 Dave: {input}
@@ -85,25 +101,119 @@ class CustomOutputParser(AgentOutputParser):
     
 
     
+embeddings = OpenAIEmbeddings()
+
+###  See https://python.langchain.com/en/latest/modules/indexes/vectorstores/examples/chroma.html for how to persist
+db = Chroma(embedding_function=embeddings, persist_directory=chromaPersistDirectory)
+retriever = db.as_retriever(search_kwargs=dict(k=3))
+
+def rebuildChatVectorMemory():
+    global db
+    global retriever
+    loader = DirectoryLoader(path=convoPath)
+    documents = loader.load()
+    text_splitter = CharacterTextSplitter(chunk_size=100, chunk_overlap=10)
+    docs = text_splitter.split_documents(documents)
+    db = Chroma.from_documents(docs, embeddings, persist_directory=chromaPersistDirectory)
+    retriever = db.as_retriever(search_kwargs=dict(k=3))
+    return
+
+
+
+@tool
+def searchRetriever(query: str) -> str:
+    """ Returns relevant docs from the vector database   """
+    docs = db.similarity_search(query)
+    prefix = "Start of vecSearch results:[\n"
+    retData = '\n'.join([d.page_content for d in docs]) 
+    suffix = "\n]End of vecSearch results:"
+    return prefix + retData + suffix
+
+def getHumanHelp(query: str) -> str:
+    """Allows the LLM to get additional input from the user"""
+    print("-----  HAL is asking for Input --------")
+    print(query)
+    print("Insert response.  Enter 'q' to end.")
+    
+    contents = []
+    while True:
+        line = input()
+        if line == 'q':
+            break
+        contents.append(line)
+    return "n".join(contents)
+            
+    
+
+weather = OpenWeatherMapAPIWrapper()
+
+
+
+# class VecSearchTool(BaseTool):
+#     name = "vecSearch"
+#     description = "useful for getting information from prior conversations with Dave"
+#
+#     def _run(self, query: str) -> str:
+#         return searchRetriever(query)
+#
+#     async def _arun(self, query: str) -> str:
+#         raise NotImplementedError("custom_search does not support async")
+
 
 llm = OpenAI(
     model_name="gpt-3.5-turbo", 
     temperature=0
     )
 
-tool_names = ["serpapi", "llm-math"]
-tools = load_tools(tool_names, llm=llm)
+loaded_tool_names = ["serpapi", "llm-math"]
+tools = load_tools(loaded_tool_names, llm=llm)
 
-memory = ConversationSummaryBufferMemory(
+tools.append(
+    Tool(
+        func=searchRetriever,
+        name="vecSearch",
+        description = "Useful for remembering information from prior conversations with Dave"
+        )
+    )
+tools.append(
+    Tool(
+        func=weather.run,
+        name="weather",
+        description = "Returns the current weather conditions.  Use Jefferson, AR, USA for the location unless told otherwise."
+        )
+    )
+tools.append(
+    Tool(
+        func=getHumanHelp,
+        name="human",
+        description = "Allows HAL to ask the human operator a question for help or clarification.  Returns the human's response."
+        )
+    )
+tool_names = [t.name for t in tools]
+
+
+convo_memory = ConversationSummaryBufferMemory(
     llm=llm,
-    max_token_limit=100,
-    # memory_key="chat_history",
+    max_token_limit=300,
+    memory_key="chat_history",
+    input_key="input",
     ai_prefix="Hal",
     human_prefix="Dave"
     )
 
+if len(os.listdir(chromaPersistDirectory)) == 0:
+    rebuildChatVectorMemory()
+    
+vector_memory = VectorStoreRetrieverMemory(retriever=retriever, input_key="input", memory_key="vec_history")
+
+           
+
+
+memory = CombinedMemory(memories=[convo_memory, vector_memory])
+
+
 prompt = CustomPromptTemplate(
-    input_variables=["input", "intermediate_steps", "history"],    
+    input_variables=["input", "intermediate_steps", "vec_history", "chat_history"],    
     template=template,
     tools=tools
     )
@@ -148,11 +258,10 @@ class HAL:
     
     
     def getUserInput(self):
-        self.dualOutput("\n*******************************\n\nDave:  ")
+        print("\n*******************************\n\nDave:  ")
         self.human_input = input("")
         if self.human_input == "exit":
             self.exit_flag = True
-        self.convo_file.write(self.human_input)
         return 
     
     def printResponse(self):
@@ -166,18 +275,22 @@ class HAL:
     def getResponse(self):
             
         if self.human_input is not None:
-            self.ai_output = agent_executor.run(self.human_input)                               
+            self.ai_output = agent_executor.run(self.human_input) 
+            self.convo_file.write("\n*******************************\n\nDave:  ")
+            self.convo_file.write(self.human_input)                              
         
         return 
     
     def run(self):
         
+        global db
         self.getUserInput()
         while not self.exit_flag:
             self.getResponse()
             self.printResponse()
             self.getUserInput()    
-        
+        db.persist()
+        db = None
         return 
     
 

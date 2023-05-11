@@ -22,8 +22,8 @@ import os, re
 from langchain.memory.vectorstore import VectorStoreRetrieverMemory
 from networkx.generators import line
 
-convoPath = '/home/david/chatWorkspace/chat/HalConvo/'
-chromaPersistDirectory = "/home/david/chatWorkspace/chat/chromaDB/"
+convoPath = '/home/david/chatWorkspace/Hal/HalConvo/'
+chromaPersistDirectory = "/home/david/chatWorkspace/Hal/chromaDB/"
 
 from typing import List, Union, Optional, Type
 from langchain import OpenAI, PromptTemplate, LLMChain, SerpAPIWrapper
@@ -215,8 +215,8 @@ convo_memory = ConversationSummaryBufferMemory(
     human_prefix="Dave"
     )
 
-if len(os.listdir(chromaPersistDirectory)) == 0:
-    rebuildChatVectorMemory()
+# if len(os.listdir(chromaPersistDirectory)) == 0:
+#     rebuildChatVectorMemory()
     
 vector_memory = VectorStoreRetrieverMemory(retriever=retriever, input_key="input", memory_key="vec_history")
 

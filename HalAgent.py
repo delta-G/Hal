@@ -1,25 +1,3 @@
-from typing import List, Union, Optional, Type
-from langchain import OpenAI, PromptTemplate, LLMChain, SerpAPIWrapper
-from langchain.chat_models import ChatOpenAI
-from langchain.memory import ConversationSummaryBufferMemory, CombinedMemory
-from langchain.agents import Tool, load_tools, initialize_agent, AgentType, AgentOutputParser, LLMSingleActionAgent, AgentExecutor
-from langchain.prompts import StringPromptTemplate 
-from langchain.schema import AgentAction, AgentFinish
-
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.document_loaders import DirectoryLoader
-
-# from langchain.callbacks.manager import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
-from langchain.tools import BaseTool
-from langchain.agents.tools import tool
-
-from langchain.utilities import OpenWeatherMapAPIWrapper
-
-import os, re 
-from langchain.memory.vectorstore import VectorStoreRetrieverMemory
-
 ####  Copyright 2023 David Caldwell disco47dave@gmail.com
 
 
@@ -35,6 +13,34 @@ from langchain.memory.vectorstore import VectorStoreRetrieverMemory
 # 
 #     You should have received a copy of the GNU General Public License
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+
+
+from typing import List, Union, Optional, Type
+
+from langchain import LLMChain
+from langchain.chat_models import ChatOpenAI
+from langchain.memory import ConversationSummaryBufferMemory
+from langchain.agents import Tool, load_tools, AgentOutputParser, LLMSingleActionAgent, AgentExecutor
+from langchain.prompts import StringPromptTemplate 
+from langchain.schema import AgentAction, AgentFinish
+
+from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain.text_splitter import CharacterTextSplitter
+from langchain.vectorstores import Chroma
+from langchain.document_loaders import DirectoryLoader
+
+from langchain.agents.tools import tool
+
+from langchain.utilities import OpenWeatherMapAPIWrapper
+
+
+from langchain.schema import Document
+
+import os, re 
+
+from HalMemory import HalConversationMemory
+
 
 
 template = """ You are Hal, a large language model serving as a digital assistant.  Hal assists a human user named Dave.  Hal is designed to be able to assist \
@@ -65,7 +71,7 @@ Begin!
 
 Previous conversation history:
 [
-{chat_history}
+{history}
 ]
 
 New Input:
@@ -117,23 +123,36 @@ chromaPersistDirectory = "/home/david/chatWorkspace/Hal/chromaDB/"
 
 
 
+
+
 class HalAgent:
+    
+    # def loadOldConversations(self):
+    #
+    #     for (root, dirs, files) in os.walk(convoPath):
+    #         for f in files:
+    #
+    #
+    #
+    #     return 
+    
     
     def __init__(self):
         
         ###  Load and setup chroma database with old conversations for vector memory
         self.embeddings = OpenAIEmbeddings()
         
-        if len(os.listdir(chromaPersistDirectory)) == 0:
-            loader = DirectoryLoader(path=convoPath)
-            documents = loader.load()
-            text_splitter = CharacterTextSplitter(chunk_size=100, chunk_overlap=10)
-            docs = text_splitter.split_documents(documents)
-            self.chromaDB = Chroma.from_documents(docs, self.embeddings, persist_directory=chromaPersistDirectory)
-            self.retriever = self.chromaDB.as_retriever(search_kwargs=dict(k=3)) 
-        else:
-            self.chromaDB = Chroma(embedding_function=self.embeddings, persist_directory=chromaPersistDirectory)
-            self.retriever = self.chromaDB.as_retriever(search_kwargs=dict(k=3))
+        # if len(os.listdir(chromaPersistDirectory)) == 0:
+        #     loader = DirectoryLoader(path=convoPath)
+        #     documents = loader.load()
+        #     text_splitter = CharacterTextSplitter(chunk_size=100, chunk_overlap=10)
+        #     docs = text_splitter.split_documents(documents)
+        #     self.chromaDB = Chroma.from_documents(docs, self.embeddings, persist_directory=chromaPersistDirectory)
+        #     self.retriever = self.chromaDB.as_retriever(search_kwargs=dict(k=3)) 
+        # else:
+        self.chromaDB = Chroma(embedding_function=self.embeddings, persist_directory=chromaPersistDirectory)
+        self.retriever = self.chromaDB.as_retriever(search_kwargs=dict(k=3))
+            
         
         
         
@@ -141,6 +160,18 @@ class HalAgent:
         llm = ChatOpenAI(
             model_name="gpt-3.5-turbo", 
             temperature=0
+            )
+        
+        ###  setup our conversation memory for the present conversation
+        self.convo_memory = HalConversationMemory(
+            llm=llm,
+            max_token_limit=100,
+            memory_key="history",
+            input_key="input",
+            ai_prefix="Hal",
+            human_prefix="Dave",
+            retriever = self.retriever,
+            dataBase = self.chromaDB,
             )
         
         ### configure our tools
@@ -174,19 +205,11 @@ class HalAgent:
         self.tool_names = [t.name for t in self.tools]
         
         
-        ###  setup our conversation memory for the present conversation
-        convo_memory = ConversationSummaryBufferMemory(
-            llm=llm,
-            max_token_limit=300,
-            memory_key="chat_history",
-            input_key="input",
-            ai_prefix="Hal",
-            human_prefix="Dave"
-            )
+        
         
         ### Build the parts of our chat agent
         prompt = HalMainPromptTemplate(
-            input_variables=["input", "intermediate_steps", "chat_history"],    
+            input_variables=["input", "intermediate_steps", "history"],    
             template=template,
             tools=self.tools
             )
@@ -207,12 +230,10 @@ class HalAgent:
         ###  setup the agent executor
         self.executor = AgentExecutor.from_agent_and_tools(agent=agent,
                                                            tools=self.tools,
-                                                           memory=convo_memory,
+                                                           memory=self.convo_memory,
                                                            verbose=True)  
         return 
-    
-    
-    @tool
+
     def searchRetriever(self, query: str) -> str:
         """ Returns relevant docs from the vector database   """
         docs = self.chromaDB.similarity_search(query)
@@ -221,7 +242,8 @@ class HalAgent:
         suffix = "\n]End of vecSearch results:"
         return prefix + retData + suffix
     
-    @tool
+    
+    
     def getHumanHelp(self, query: str) -> str:
         """Allows the LLM to get additional input from the user"""
         print("-----  HAL is asking for Input --------")
@@ -235,5 +257,18 @@ class HalAgent:
                 break
             contents.append(line)
         return "n".join(contents)
+    
+    
+    def closingOut(self):
+        print("**********  Hal Agent Closing Out  **********")
+        self.convo_memory.saveRemainingConversation()
+        if self.chromaDB is not None:
+            self.chromaDB.persist()  
+            self.chromaDB = None      
+        
+        return 
+    
+    
+    
     
     

@@ -19,29 +19,10 @@
 import HalAgent
 
 import os, re 
-from langchain.memory.vectorstore import VectorStoreRetrieverMemory
 
 convoPath = '/home/david/chatWorkspace/Hal/HalConvo/'
 chromaPersistDirectory = "/home/david/chatWorkspace/Hal/chromaDB/"
 
-from typing import List, Union, Optional, Type
-from langchain import OpenAI, PromptTemplate, LLMChain, SerpAPIWrapper
-from langchain.chat_models import ChatOpenAI
-from langchain.memory import ConversationSummaryBufferMemory, CombinedMemory
-from langchain.agents import Tool, load_tools, initialize_agent, AgentType, AgentOutputParser, LLMSingleActionAgent, AgentExecutor
-from langchain.prompts import StringPromptTemplate 
-from langchain.schema import AgentAction, AgentFinish
-
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.vectorstores import Chroma
-from langchain.document_loaders import DirectoryLoader
-
-# from langchain.callbacks.manager import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
-from langchain.tools import BaseTool
-from langchain.agents.tools import tool
-
-from langchain.utilities import OpenWeatherMapAPIWrapper
 
 template = """ You are Hal, a large language model serving as a digital assistant.  Hal assists a human user named Dave.  Hal is designed to be able to assist \
 with a wide range of tasks, from answering simple questions to providing in-depth explanations and discussions on a wide range of topics. As a language model, Hal is \
@@ -166,9 +147,27 @@ class HAL:
         global db
         self.getUserInput()
         while not self.exit_flag:
-            self.getResponse()
+            self.getResponse()                
             self.printResponse()
+            # self.printMessages()
             self.getUserInput()    
+        return 
+    
+    def printMessages(self):
+        print("*********----------Messages---------*********")
+        buffer = self.agent.convo_memory.chat_memory.messages
+        for message in buffer:
+            print("---->")
+            print(message.type)
+            print(message.content)
+            print(message)
+            print("<-----")
+        print("*********----------Messages---------*********")
+        
+    def closingOut(self):
+        
+        self.agent.closingOut()
+        
         return 
     
 
@@ -187,4 +186,11 @@ convoFileName = f"{convoPath}Halconvo{lastNum:04d}.txt"
 with open(convoFileName, 'x') as convoFile:
     
     hal = HAL(convoFile)
-    hal.run()
+    try:
+        hal.run()
+    except Exception as e:
+        print("**********  HAL EXCEPTION  **********")
+        print(e) 
+    finally:
+        hal.closingOut()
+    

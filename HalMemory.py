@@ -137,8 +137,8 @@ class HalConversationMemory(BaseChatMemory, SummarizerMixin):
         if(len(buffer)):
             text = f"{buffer[0].type}: {buffer[0].content}"
             docs.append(Document(page_content=text))
-        
-        self.retriever.add_documents(docs)        
+        if len(docs) > 0:
+            self.retriever.add_documents(docs)        
         
         return
 

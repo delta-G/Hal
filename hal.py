@@ -17,158 +17,12 @@
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import HalAgent
+import HalGui
 
 import os, re 
 
 convoPath = '/home/david/chatWorkspace/Hal/HalConvo/'
 chromaPersistDirectory = "/home/david/chatWorkspace/Hal/chromaDB/"
-
-
-template = """ You are Hal, a large language model serving as a digital assistant.  Hal assists a human user named Dave.  Hal is designed to be able to assist \
-with a wide range of tasks, from answering simple questions to providing in-depth explanations and discussions on a wide range of topics. As a language model, Hal is \
-able to generate human-like text based on the input it receives, allowing it to engage in natural-sounding conversations and provide responses \
-that are coherent and relevant to the topic at hand.
-Hal always strives to be factual.  If Hal does not know an answer then Hal will truthfully say that it does not know.  It will never hallucinate.  \
-
-Hal has been provided a list of tools that will help with the job.  These tools will allow Hal to interact with the real world in limited ways.  \
-Some are for obtaining additional information while others are for taking actions.  
-
-You have access to the following tools:
-
-{tools}
-
-Use the following format your final response MUST start with "Final Answer:" in order to not cause an error:
-
-Question: the input to which you must respond
-Thought: you should always think about what to do. 
-Action: the action to take, should be one of [{tool_names}] or None.  If Action is None then you should skip to Final Answer and respond now.
-Action Input: the input to the action
-Observation: the result of the action
-... (this Thought/Action/Action Input/Observation can repeat N times and will be recorded for you in the Agent Scratchpad section)
-Thought: I now know the final answer
-Final Answer: the final answer or response to the original input.  This MUST be included if no action is taken.
-
-Begin!
-
-Previous conversation history:
-[
-{chat_history}
-]
-
-New Input:
-Dave: {input}
-Agent Scratchpad:
-[
-{agent_scratchpad}
-]"""
-
-#####Relevant parts of past conversations (You don't need to use these pieces of information if not relevant.):
-##### [
-##### {vec_history}
-##### ]
-
-
-
-####  I think this was missing something about func.  I think I need func=self._run in there.  Not sure.  Need to look at BaseTool
-# class VecSearchTool(BaseTool):
-#     name = "vecSearch"
-#     description = "useful for getting information from prior conversations with Dave"
-#
-#     def _run(self, query: str) -> str:
-#         return searchRetriever(query)
-#
-#     async def _arun(self, query: str) -> str:
-#         raise NotImplementedError("custom_search does not support async")
-
-
-# if len(os.listdir(chromaPersistDirectory)) == 0:
-#     rebuildChatVectorMemory()
-    
-# vector_memory = VectorStoreRetrieverMemory(retriever=retriever, input_key="input", memory_key="vec_history")
-
-           
-
-
-# memory = CombinedMemory(memories=[convo_memory, vector_memory])
-
-# agent_chain = initialize_agent(tools, llm, agent=AgentType.CONVERSATIONAL_REACT_DESCRIPTION, verbose=True, memory=memory)
-
-# chain = LLMChain(
-#     llm=llm,
-#     prompt=prompt,
-#     verbose=True,
-#     memory=memory
-#     )
-
-
-class HAL:
-    
-    def __init__(self, convo_file):
-        
-        self.agent = HalAgent.HalAgent()
-        self.convo_file = convo_file 
-        self.exit_flag = False
-        
-        return
-    
-    def dualOutput(self, aString):
-        print(aString)
-        self.convo_file.write(aString)
-        
-        return 
-    
-    
-    def getUserInput(self):
-        print("\n*******************************\n\nDave:  ")
-        self.human_input = input("")
-        if self.human_input == "exit":
-            self.exit_flag = True
-        return 
-    
-    def printResponse(self):
-        
-        if self.ai_output is not None:
-            self.dualOutput("\n*******************************\n\nHal:  ")
-            self.dualOutput(self.ai_output)
-        
-        return 
-    
-    def getResponse(self):
-            
-        if self.human_input is not None:
-            self.ai_output = self.agent.executor.run(self.human_input) 
-            self.convo_file.write("\n*******************************\n\nDave:  ")
-            self.convo_file.write(self.human_input)                              
-        
-        return 
-    
-    def run(self):
-        
-        global db
-        self.getUserInput()
-        while not self.exit_flag:
-            self.getResponse()                
-            self.printResponse()
-            # self.printMessages()
-            self.getUserInput()    
-        return 
-    
-    def printMessages(self):
-        print("*********----------Messages---------*********")
-        buffer = self.agent.convo_memory.chat_memory.messages
-        for message in buffer:
-            print("---->")
-            print(message.type)
-            print(message.content)
-            print(message)
-            print("<-----")
-        print("*********----------Messages---------*********")
-        
-    def closingOut(self):
-        
-        self.agent.closingOut()
-        
-        return 
     
 
 if not os.path.exists(convoPath):
@@ -185,12 +39,16 @@ convoFileName = f"{convoPath}Halconvo{lastNum:04d}.txt"
 
 with open(convoFileName, 'x') as convoFile:
     
-    hal = HAL(convoFile)
+    # hal = HAL(convoFile)
+    agent = HalAgent.HalAgent()
+    gui = HalGui.HalGui(agent, convoFile)   
+    
+    
     try:
-        hal.run()
+        gui.parent.mainloop()
     except Exception as e:
         print("**********  HAL EXCEPTION  **********")
         print(e) 
     finally:
-        hal.closingOut()
+        agent.closingOut()
     

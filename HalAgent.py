@@ -152,8 +152,8 @@ class HalAgent:
         # else:
         self.chromaDB = Chroma(embedding_function=self.embeddings, persist_directory=chromaPersistDirectory)
         self.retriever = self.chromaDB.as_retriever(search_kwargs=dict(k=3))
-            
         
+        self.currentQuery = ""
         
         
         ### declare a language model to use for setting up
@@ -176,7 +176,10 @@ class HalAgent:
         
         ### configure our tools
         ###  load the premade tools first
-        loaded_tool_names = ["serpapi", "llm-math"]
+        loaded_tool_names = [
+            "serpapi",
+             "llm-math"
+             ]
         self.tools = load_tools(loaded_tool_names, llm=llm)
         
         ###  then add some custom tools we've created. 
@@ -231,8 +234,18 @@ class HalAgent:
         self.executor = AgentExecutor.from_agent_and_tools(agent=agent,
                                                            tools=self.tools,
                                                            memory=self.convo_memory,
+                                                           handle_parsing_errors = self.parserExceptionHandler,
                                                            verbose=True)  
         return 
+    
+    def parserExceptionHandler(self, e):
+        print("@*@*@*@*@*@*@  EXCEPTION @*@*@*@*@*@*")
+        print(e)
+        return self.currentQuery
+    
+    def run(self, query: str):
+        self.currentQuery = query                
+        return self.executor.run(self.currentQuery)
 
     def searchRetriever(self, query: str) -> str:
         """ Returns relevant docs from the vector database   """

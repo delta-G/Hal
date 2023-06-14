@@ -211,7 +211,7 @@ class HalAgent:
         
         
         ### Build the parts of our chat agent
-        prompt = HalMainPromptTemplate(
+        self.prompt = HalMainPromptTemplate(
             input_variables=["input", "intermediate_steps", "history"],    
             template=template,
             tools=self.tools
@@ -219,11 +219,11 @@ class HalAgent:
         
         output_parser = HalMainOutputParser()
         
-        llm_chain = LLMChain(llm=llm, prompt=prompt, verbose=True)
+        llm_chain = LLMChain(llm=llm, prompt=self.prompt, verbose=True)
         
         
         ###  Setup the chat agent
-        agent = LLMSingleActionAgent(
+        self.agent = LLMSingleActionAgent(
             llm_chain=llm_chain,
             output_parser = output_parser,
             stop=["\nObservation:"],
@@ -231,7 +231,7 @@ class HalAgent:
             )
         
         ###  setup the agent executor
-        self.executor = AgentExecutor.from_agent_and_tools(agent=agent,
+        self.executor = AgentExecutor.from_agent_and_tools(agent=self.agent,
                                                            tools=self.tools,
                                                            memory=self.convo_memory,
                                                            handle_parsing_errors = self.parserExceptionHandler,
